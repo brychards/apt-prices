@@ -22,21 +22,29 @@ from random import randint
 from time import sleep
 
 
-"""
-Listings are either a single unit (e.g. a house for rent) or multi-units (e.g. an 
-apartment complex with multiple apartments available. The page structure of each type is 
-different, so we scrape the info using a different function for each.
-"""
-def get_info_from_listing(driver, outfile):
+
+def get_info_from_listing(driver, apt_outfile, addr_outfile):
+    """ Saves to file the information from a single listing's page.
+
+    Saves per-apartment information (such as square footage, number of beds, etc.) to 'apt_outfile'.
+    Saves per-address information (such as address, features of the apartment complex) to 'addr_outfile'.
+
+    Listings are either a single unit (e.g. a house for rent) or multi-units (e.g. an 
+    apartment complex with multiple apartments available. The page structure of each type is 
+    different, so we scrape the info using a different function for each.
+    """
+
     soup = BeautifulSoup(driver.page_source)
+    url = driver.current_url
+    listing_functions.save_per_location_info(soup, url, addr_outfile)
     if listing_functions.is_single_unit_listing(soup):
         try:
-            listing_functions.get_info_from_single_unit_listing(soup, outfile)
+            listing_functions.save_info_from_single_unit_listing(soup, apt_outfile)
         except Exception as e:
             print("Could not extract info from single-unit listing. Got Exception: ", e)
     else:
         try:
-            listing_functions.get_info_from_multi_unit_listing(soup, outfile)
+            listing_functions.save_info_from_multi_unit_listing(soup, apt_outfile)
         except Exception as e:
             print("Could not extract info from multi-unit listing. Got Exception: ", e)
 
@@ -68,8 +76,8 @@ def click_on_element(driver, element):
     actions.click()
     actions.perform()
 
-def save_all_results_from_page(driver, outfile):
-    outfile.write("\n\n")
+def save_all_results_from_page(driver, apt_outfile, addr_outfile):
+    apt_outfile.write("\n\n")
     sleep(random.randint(5,9))
     count = 0
     while True:
@@ -79,18 +87,18 @@ def save_all_results_from_page(driver, outfile):
         link = links[count]
         click_on_element(driver, link)
         sleep(random.random() + randint(1,2))
-        get_info_from_listing(driver, outfile)
-        print("Saved " + str(count + 1) + "'th result.")
+        get_info_from_listing(driver, apt_outfile=apt_outfile, addr_outfile=addr_outfile)
+        print("Saved result # " + str(count + 1))
         driver.back()
         sleep(random.random() + randint(1,2))
         count += 1
 
-def save_all_results(driver, filename, max_pages = 1000):
-    with open(filename, 'w') as outfile:
+def save_all_results(driver, apt_filename, addr_filename, max_pages = 1000):
+    with open(apt_filename, 'w') as apt_outfile, open(addr_filename, 'w') as addr_outfile:
         page = 1
         while True:
             print("About to save results from page ", page)
-            save_all_results_from_page(driver, outfile)
+            save_all_results_from_page(driver, apt_outfile=apt_outfile, addr_outfile=addr_outfile)
             print("Finished saving results from page ", page)
             if page >= max_pages or is_page_last(driver):
                 print("It's the last page!")
@@ -117,8 +125,10 @@ def parse_args():
     parser.add_argument('--url',
                         default = 'https://apartments.com/charleston-sc',
                         help='apartments.com URL.')
-    parser.add_argument('--csv',
-                        help='CSV file to which results will be saved.')
+    parser.add_argument('--apt_csv',
+                        help='CSV file to which per-apartment results will be saved.')
+    parser.add_argument('--addr_csv',
+                        help='CSV file to which per-address results will be saved.')
     parser.add_argument('--chromedriver',
                         default='/home/bryce/Downloads/chromedriver',
                         help='Path to Selenium Chromedriver file.')
@@ -132,9 +142,10 @@ def parse_args():
 def main():
     args = parse_args()
     driver = create_driver_and_open_url(args.chromedriver, args.url)
-    csv_filename = args.csv
+    apt_csv_filename = args.apt_csv
+    addr_csv_filename = args.addr_csv
     max_pages = args.max_pages
-    save_all_results(driver, filename = csv_filename, max_pages = max_pages)
+    save_all_results(driver, apt_filename=apt_csv_filename, addr_filename=addr_csv_filename, max_pages = max_pages)
 
 
 if __name__ == '__main__':

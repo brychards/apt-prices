@@ -36,6 +36,7 @@ def get_address_string(soup):
 
     return addr_string
 
+
 def is_single_unit_listing(soup):
     # Does this page have a div of class "pricingGridItem"? If so, return false. If not, true
     pricing_grid_items = soup.find_all("div", class_=PRICING_GRID_ITEM)
@@ -43,18 +44,23 @@ def is_single_unit_listing(soup):
         return False
     return True
 
-def get_info_from_single_unit_listing(soup, outfile):
+
+def get_info_from_single_unit_listing(soup, apt_outfile):
     address = get_address_string(soup)
     rent_details = soup.find_all("p", class_="rentInfoDetail")
     printstr = address + ";; " + ";; ".join(map(lambda rd : rd.string, rent_details)) + "\n"
-    outfile.write(printstr)
+    apt_outfile.write(printstr)
 
-"""
-Some multi-unit listings have an exact price row for every unit that's available.
-Others just have a price range for each floor plan, e.g. "$1750 - $1900".
-This function handles the latter case. We'll just save the price range as the price.
-When doing data analysis, we can decide how to handle these cases."""
-def get_less_precise_info_from_multi_unit_listing(soup, address, outfile):
+
+def get_less_precise_info_from_multi_unit_listing(soup, address, apt_outfile):
+    """ Scrapes approximate information from a multi-unit listing.
+
+    Some multi-unit listings have an exact price row for every unit that's available.
+    Others just have a price range for each floor plan, e.g. "$1750 - $1900".
+    This function handles the latter case. We'll just save the price range as the price.
+    When doing data analysis, we can decide how to handle these cases.
+    """
+
     pricing_grid_items = soup.find_all("div", class_=PRICING_GRID_ITEM)
     for item in pricing_grid_items:
         classes = item.parent["class"]
@@ -67,10 +73,10 @@ def get_less_precise_info_from_multi_unit_listing(soup, address, outfile):
         other_info = other_info.replace("bed", "bd").replace("bath", "ba")
         formatted_info = ";; ".join([w.strip() for w in other_info.split(",")])
         println = "{address};; {rent_range};; {bd_ba_sqft}\n".format(address=address, rent_range=rent_range, bd_ba_sqft=formatted_info)
-        outfile.write(println)
+        apt_outfile.write(println)
 
 
-def get_info_from_multi_unit_listing(soup, outfile):
+def get_info_from_multi_unit_listing(soup, apt_outfile):
     addr = get_address_string(soup)
 
     pricing_grid_items = soup.find_all("div", class_=PRICING_GRID_ITEM)
@@ -112,4 +118,86 @@ def get_info_from_multi_unit_listing(soup, outfile):
             assert len(sqft_list) == 1, "UNEXPECTED square footage: " + sqft_text
             sqft = sqft_list[0]
             printstr = PRINT_STR.format(addr=addr, rent=price, beds=beds, baths=baths, sqft=sqft)
-            outfile.write(printstr)    
+            apt_outfile.write(printstr)    
+
+
+
+SEMICOLON_REPLACEMENT = ',,,'
+NEWLINE_REPLACEMENT = '   '
+def replace_semicolons(text):
+    return text.replace(';', SEMICOLON_REPLACEMENT)
+
+def add_semicolons_back(text):
+    return text.replace(SEMICOLON_REPLACEMENT, ';')
+
+def replace_newlines(text):
+    return text.replace('\n', NEWLINE_REPLACEMENT)
+
+def add_newlines_back(text):
+    return text.replae(NEWLINE_REPLACEMENT, '\n')
+
+
+def get_combined_amenities(soup):
+    amenities = []
+    amenities_section = soup.find('section', class_='amenitiesSection')
+    if amenities_section is None:
+        return []
+    bullet_lis = amenities_section.find_all('li', class_='specInfo')
+    for li in bullet_lis:
+        amenity = '()' + li.text.replace('\n', '')
+        amenities.append(amenity)   
+    return amenities 
+
+
+def get_page_title(soup):
+    title = soup.find('title')
+    title_str = title.text.replace('| Apartments.com', '')
+    return(title_str)
+
+
+def get_unique_amenities(soup):
+    unique_amenity_lis = soup.find_all('li', class_='uniqueAmenity')
+    amenities = []
+    for li in unique_amenity_lis:
+        amenity = '()' + li.text.replace('\n', '')
+        amenities.append(amenity)
+    return amenities
+
+
+def get_bullet_points(soup):
+    combined_amenities = get_combined_amenities(soup)
+    unique_amenities = get_unique_amenities(soup)
+    amenities = combined_amenities if combined_amenities else unique_amenities
+    if not combined_amenities and unique_amenities:
+        print("Could not find combined_amenities, but did find unique_amenities")
+    return '. '.join(amenities) if amenities else ''
+
+
+def save_per_location_info(soup, url, addr_outfile):
+    address = get_address_string(soup)
+    address_without_semis = replace_semicolons(address)
+    if (address != address_without_semis):
+        print("WARNING, address " + address + " has semicolons, for url: ", url)
+    description_section = soup.find("section", class_="descriptionSection")
+    blurb = ''
+    if description_section is None:
+        print ('Missing descriptionSection')
+    else:
+        ps = description_section.find_all("p")
+        if ps is None:
+            print('No p tag in descriptionSection')
+        else:
+            p1 = ps[0]
+            if len(p1.attrs) > 0:
+                print("WARNING, first <p> of description section has attrs for url: ", url)
+            blurb = p1.text
+            if len(blurb) == 0:
+                print("WARNING, this page's blurb was length 0, for url ", url)
+            blurb = replace_newlines(replace_semicolons(blurb))
+    bullets = get_bullet_points(soup)
+    bullets = replace_newlines(replace_semicolons(bullets))
+    title = replace_semicolons(get_page_title(soup))
+    saveline = "{address}; {url}; {title}; {bullets}; {blurb}\n".format(address=address_without_semis, url=url, title=title, bullets=bullets, blurb=blurb)
+    addr_outfile.write(saveline)
+
+    
