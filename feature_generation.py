@@ -127,9 +127,9 @@ def split_data(apt_df, addr_df):
 
 
 class FeatureGenerator:
-    def __init__(self, min_bullet_count = 20, num_svd_components = 15, min_zipcode_dummy_count = 10):
+    def __init__(self, min_bullet_count = 20, num_blurb_components = 5, num_bullet_components = 15, min_zipcode_dummy_count = 10):
         self.cross_term_computer = None
-        self.blurb_features = BlurbFeatures()
+        self.blurb_features = BlurbFeatures(num_components=num_blurb_components)
         
         # Dictionary mapping from column name to the DummyEncoder object for that column.
         # This will actually let us create new encoders on the fly in get_training_features().
@@ -138,7 +138,7 @@ class FeatureGenerator:
         self.dummy_encoders["property_type"] = DummyEncoder(col_name="property_type", min_count = 3)
         self.property_type_encoder = OneHotEncoder(handle_unknown="ignore", sparse_output = False, min_frequency=10)
         self.bullet_features = BulletFeatures(min_bullet_count=min_bullet_count,
-                                              num_svd_components=num_svd_components)
+                                              num_svd_components=num_bullet_components)
     
     def _merge_svd_feats_and_apt_df(self, svd_df, X, addr_df):
         # we have to concat these, instead of merge them, because scikitlearn just returns a numpy array.
@@ -190,14 +190,14 @@ class FeatureGenerator:
         X_with_bullets = apt_df.merge(addrs_and_bullet_svd_feats, on='address')
         return X_with_bullets
     
-    def _add_bullet_feats(self, addr_df, addr_feats, training = True):
+    def _add_bullet_feats(self, addr_feats, training = True):
         bullet_svd_df = None
         if training:
-            bullet_svd_df = self.bullet_features.get_training_svd_df(addr_df)
+            bullet_svd_df = self.bullet_features.get_training_svd_df(addr_feats)
         else:
-            bullet_svd_df = self.bullet_features.get_testing_svd_df(addr_df)
+            bullet_svd_df = self.bullet_features.get_testing_svd_df(addr_feats)
         addr_feats_new = addr_feats.join(bullet_svd_df)
-        assert(addr_feats.shape == addr_feats.shape)
+        assert(addr_feats.shape[0] == addr_feats_new.shape[0])
         return addr_feats_new
     
     def _add_blurb_feats(self, addr_feats, training = True):
@@ -213,9 +213,13 @@ class FeatureGenerator:
         
 
     def _add_furnished(self, addr_feats):
-        def is_furnished(bullets):
-            return int("()Furnished." in bullets)
-        addr_feats['furnished'] = addr_feats.bullets.map(is_furnished)
+        def is_furnished(combined_bullets):
+            m = re.match(r'.*\|furnished(?! units).*', combined_bullets)
+            if m is None:
+                return 0
+            else:
+                return 1
+        addr_feats['furnished'] = addr_feats.combined_bullets.map(is_furnished)
         return addr_feats
     
     def _add_dummies(self, addr_feats, col_name, training=True):
@@ -238,8 +242,10 @@ class FeatureGenerator:
         apt_features = apt_df.sort_values(by=['address']).reset_index(drop=True)
         addr_features = deepcopy(addr_df)
         addr_features = self._add_lat_long_features(addr_features)
-        addr_features = self._add_blurb_feats(addr_features, training = training)
-        addr_features = self._add_bullet_feats(addr_df=addr_df, addr_feats=addr_features, training=training)
+        addr_features = self._add_blurb_feats(addr_features, training=training)
+        print("columns before adding bullet feats: ", list(addr_features.columns))
+        addr_features = self._add_bullet_feats(addr_features, training=training)
+        print("columns after adding bullet feats: ", list(addr_features.columns))
         addr_features = self._add_furnished(addr_features)
         addr_features = self._add_dummies(addr_features, col_name="zip", training=training)
         # To add the property type dummy vars, first we need to create a "property_type" column
@@ -296,7 +302,7 @@ def select_column_names(all_column_names,
                 returned_cols.append(col)
     
     if blurb_feats:
-        blurb_re = r'^svd_[0-9]+$'
+        blurb_re = r'^Blurb_svd_[0-9]+$'
         for col in all_column_names:
             m = re.match(blurb_re, col)
             if m:
