@@ -7,7 +7,6 @@ import re
 from copy import deepcopy
 
 import imp
-import bullets
 from blurbs import BlurbFeatures
 from bullets import BulletFeatures
 
@@ -84,10 +83,7 @@ class DummyEncoder:
 
 # splits apt_df and addr_df into training, cross-validation, and testing subsets.
 # split is done by the building - a building is only in one of the subsets, so all of its units will be together.
-def split_data(apt_df, addr_df):
-    apt_df_shape = apt_df.shape
-    addr_df_shape = addr_df.shape
-
+def split_data(apt_df, addr_df, max_apts_per_addr = 10):
     # Drop rows with missing data in apt_df
     drop_apt_row = apt_df.isna().any(axis=1)
     apt_df = apt_df.loc[~drop_apt_row]
@@ -103,16 +99,13 @@ def split_data(apt_df, addr_df):
     addr_df.drop_duplicates(subset=['address'], inplace=True)
     addr_df.reset_index(inplace=True, drop=True)
 
-    print("apt_df shape before: ", apt_df_shape)
-    print('addr_df shape before: ', addr_df_shape)
-    print("apt_df shape after: ", apt_df.shape)
-    print('addr_df shape after: ', addr_df.shape)
-
+    # Shuffle the apartments, then take max_apts_per_addr per address
+    apt_df_sample = shuffle(apt_df).groupby('address').head(n=max_apts_per_addr)
 
     # define indices for training and testing data
     num_addrs = addr_df.shape[0]
     addr_df = shuffle(addr_df).reset_index(drop=True)
-    num_train = int(0.70 * num_addrs)
+    num_train = int(0.75 * num_addrs)
     num_test = num_addrs - num_train
     train_indices = pd.Series([True for i in range(num_train)] + [False for i in range(num_addrs - num_train)])
     test_indices = pd.Series([False for i in range(num_train)] + [True for i in range(num_test)])
@@ -120,8 +113,8 @@ def split_data(apt_df, addr_df):
     # create training and testing dataframes
     addr_df_train = addr_df.loc[train_indices].reset_index(drop=True)
     addr_df_test = addr_df.loc[test_indices].reset_index(drop=True)
-    apt_df_train = pd.merge(apt_df, addr_df_train[['address']], on='address')
-    apt_df_test = pd.merge(apt_df, addr_df_test[['address']], on='address')
+    apt_df_train = pd.merge(apt_df_sample, addr_df_train[['address']], on='address')
+    apt_df_test = pd.merge(apt_df_sample, addr_df_test[['address']], on='address')
 
     return ((apt_df_train, addr_df_train), (apt_df_test, addr_df_test))
 
@@ -190,7 +183,7 @@ class FeatureGenerator:
         X_with_bullets = apt_df.merge(addrs_and_bullet_svd_feats, on='address')
         return X_with_bullets
     
-    def _add_bullet_feats(self, addr_feats, training = True):
+    def _add_bullet_feats(self, addr_feats, training):
         bullet_svd_df = None
         if training:
             bullet_svd_df = self.bullet_features.get_training_svd_df(addr_feats)
@@ -198,9 +191,14 @@ class FeatureGenerator:
             bullet_svd_df = self.bullet_features.get_testing_svd_df(addr_feats)
         addr_feats_new = addr_feats.join(bullet_svd_df)
         assert(addr_feats.shape[0] == addr_feats_new.shape[0])
+
+        print("Bryce before hand_picked_features, addr_feats.columns", list(addr_feats.columns))
+
+        hand_picked_features = self.bullet_features.generate_hand_picked_features(addr_feats, training)
+        addr_feats_new = addr_feats_new.join(hand_picked_features)
         return addr_feats_new
     
-    def _add_blurb_feats(self, addr_feats, training = True):
+    def _add_blurb_feats(self, addr_feats, training):
         svd_df = None
         if training:
             self.blurb_features.compute_training_tfidf_matrix(addr_feats.blurb)
@@ -222,7 +220,7 @@ class FeatureGenerator:
         addr_feats['furnished'] = addr_feats.combined_bullets.map(is_furnished)
         return addr_feats
     
-    def _add_dummies(self, addr_feats, col_name, training=True):
+    def _add_dummies(self, addr_feats, col_name, training):
         dummies_df = None
         if training:
             dummies_df = self.dummy_encoders[col_name].generate_training_dummy_vars(addr_feats)
@@ -234,9 +232,6 @@ class FeatureGenerator:
     def _merge_addr_and_apt_features(self, addr_features, apt_features):
         merged_features = apt_features.merge(addr_features, on='address')
         return merged_features
-
-    def _convert_col_to_dummies(self, addr_features, col_name, training=True):
-        """ stores encoder in self.col_to_encoders[col_name] """
 
     def _get_features(self, apt_df, addr_df, training):
         apt_features = apt_df.sort_values(by=['address']).reset_index(drop=True)
@@ -282,7 +277,8 @@ def select_column_names(all_column_names,
                         units_in_building = False,
                         zip_feats = False,
                         blurb_feats = False,
-                        bullet_feats = False,
+                        bullets_svd_feats = False,
+                        bullets_handpicked_feats = False,
                         property_type = False,
                         furnished = False,
                         cross_term_res = []):
@@ -308,12 +304,20 @@ def select_column_names(all_column_names,
             if m:
                 returned_cols.append(col)
     
-    if bullet_feats:
+    if bullets_svd_feats:
         bullets_re = r'^Bullet_concept_.*'
         for col in all_column_names:
             m = re.match(bullets_re, col)
             if m:
                 returned_cols.append(col)
+    
+    if bullets_handpicked_feats:
+        bullets_re = r'^bullets_feat_.*'
+        for col in all_column_names:
+            m = re.match(bullets_re, col)
+            if m:
+                returned_cols.append(col)
+
     if property_type:
         # property_types = ['apartment', 'condo', 'house', 'townhouse', 'undefined']
         property_types = ['house', 'townhouse', 'undefined']

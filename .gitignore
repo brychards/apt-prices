@@ -1,4 +1,9 @@
-__pycache__/
 *.csv
+__pycache__/
+api_keys/
 csvs/
+.env
+google_maps_testing.ipynb
+scratch.ipynb
+scratch/
 .vscode/
